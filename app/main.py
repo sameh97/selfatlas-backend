@@ -1,18 +1,39 @@
-from langchain.chat_models import init_chat_model
-import os
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
+from app.db.mongo import connect_mongo, disconnect_mongo
+from app.api.v1.router import router
 
-load_dotenv()
 
-api_key = os.getenv("GOOGLE_API_KEY")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await connect_mongo()
+    yield
+    # Shutdown
+    await disconnect_mongo()
 
-if not api_key:
-    raise ValueError("GOOGLE_API_KEY is not set")
 
-os.environ["GOOGLE_API_KEY"] = api_key
+app = FastAPI(
+    title="Self Atlas API",
+    description="Your personal emotional memory system",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs" if settings.is_dev else None,
+)
 
-# Use "google_genai:" prefix instead of "google_vertexai:"
-gemini_2_5_flash = init_chat_model("google_genai:gemini-2.5-flash", temperature=0)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-response = gemini_2_5_flash.invoke("what's your name")
-print(response.content)
+app.include_router(router)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "app": "self-atlas"}

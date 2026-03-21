@@ -29,8 +29,10 @@ dependencies = [
     # Auth & Security
     "python-jose[cryptography]==3.3.0",
     "passlib[bcrypt]==1.7.4",
-
+    "bcrypt==4.0.1",  
+    
     # Config
-    "pydantic==2.11.1",
-  "pydantic-settings>=2.10.1",
+    "pydantic[email]==2.11.1",
+    "pydantic-settings>=2.10.1",
+    "email-validator==2.2.0",
 ]
