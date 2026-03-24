@@ -11,9 +11,7 @@ def get_flash():
 
 
 def get_embeddings():
-    """Google text-embedding-004 — 768 dims, matches Pinecone index."""
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
-    return GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
-        google_api_key=settings.google_api_key,
-    )
+    """Use google-genai SDK directly — avoids v1beta routing issue."""
+    from google import genai
+    client = genai.Client(api_key=settings.google_api_key)
+    return client

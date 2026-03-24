@@ -30,73 +30,79 @@ Their retrieved memories:
 
 _chain = WITNESS_PROMPT | get_flash() | StrOutputParser()
 
+from bson import ObjectId
 
 async def recall(
-    query: str,
-    user_id: str,
-    k: int = 5,
+    query: str, 
+    user_id: str, 
+    k: int = 5, 
+    threshold: float = 0.70
 ) -> tuple[list[dict], str]:
     """
-    Full recall pipeline:
-    1. Embed query → search Pinecone
-    2. Fetch full entries from MongoDB
-    3. Gemini synthesizes a witnessing response
-
-    Returns (memory_chunks, synthesis)
+    RAG Pipeline:
+    1. Search Pinecone for similar vectors.
+    2. Filter by similarity score to remove 'less related' noise.
+    3. Bridge String IDs to MongoDB ObjectIds.
+    4. Fetch full entries and map them to the Pydantic schema.
+    5. Synthesize a witnessing response using Gemini Flash.
     """
 
-    # Step 1 — semantic search in Pinecone
-    matches = await query_similar(query, user_id, k=k)
+    # 1. Semantic search in Pinecone
+    all_matches = await query_similar(query, user_id, k=k)
+
+    # 2. Filter by similarity score (The "Noise" Filter)
+    # Adjust this 0.75 based on your specific index metrics
+    matches = [m for m in all_matches if m.score >= threshold]
 
     if not matches:
-        synthesis = await _chain.ainvoke({
-            "context": "No relevant memories found.",
-            "query": query,
-        })
-        return [], synthesis
+        return [], "I looked through your past entries, but I couldn't find any specific memories that match that right now."
 
-    # Step 2 — fetch full entries from MongoDB by entry_id
-    entry_ids = [m.metadata.get("entry_id") for m in matches if m.metadata]
+    # 3. Bridge the Gap: Convert string IDs to BSON ObjectIds
+    entry_ids = [
+        ObjectId(m.metadata.get("entry_id")) 
+        for m in matches 
+        if m.metadata and m.metadata.get("entry_id")
+    ]
+
+    # 4. Fetch documents from MongoDB
     entries = await Entry.find(
         {"_id": {"$in": entry_ids}, "user_id": user_id}
     ).to_list()
 
-    # Map id → entry for ordering
+    # 5. Map entries to preserve relevance order and match MemoryChunk schema
     entry_map = {str(e.id): e for e in entries}
-
-    # Step 3 — build context block from retrieved entries
+    
     memory_chunks = []
     context_parts = []
 
-    for match in matches:
-        entry_id = match.metadata.get("entry_id")
-        entry = entry_map.get(entry_id)
+    for m in matches:
+        eid_str = m.metadata.get("entry_id")
+        entry = entry_map.get(eid_str)
+        
         if not entry:
             continue
-
-        date_str = entry.captured_at.strftime("%B %d, %Y at %I:%M %p")
-        emotion = entry.emotion_primary or "unknown"
-        valence = f"{entry.valence:+.1f}" if entry.valence is not None else "?"
-
-        context_parts.append(
-            f"--- {date_str} [{emotion}, valence: {valence}] ---\n"
-            f"{entry.raw_text}"
-        )
-
+            
+        # Matches your MemoryChunk Pydantic model exactly
         memory_chunks.append({
-            "entry_id": entry_id,
+            "entry_id": eid_str,
             "raw_text": entry.raw_text,
-            "captured_at": entry.captured_at.isoformat(),
-            "emotion_primary": entry.emotion_primary,
-            "valence": entry.valence,
+            "captured_at": entry.captured_at.isoformat(), # ISO string for Pydantic/Frontend
+            "emotion_primary": entry.emotion_primary or "unknown",
+            "valence": entry.valence or 0.0,
+            "score": m.score
         })
+        
+        # Format context for the LLM
+        date_str = entry.captured_at.strftime("%B %d, %Y")
+        context_parts.append(f"[{date_str}]: {entry.raw_text}")
 
-    context = "\n\n".join(context_parts)
-
-    # Step 4 — Gemini witnesses
-    synthesis = await _chain.ainvoke({
-        "context": context,
+    # 6. Generate Synthesis
+    context_text = "\n\n".join(context_parts)
+    chain = WITNESS_PROMPT | get_flash() | StrOutputParser()
+    
+    synthesis = await chain.ainvoke({
         "query": query,
+        "context": context_text
     })
 
     return memory_chunks, synthesis
