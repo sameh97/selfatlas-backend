@@ -36,7 +36,7 @@ async def recall(
     query: str, 
     user_id: str, 
     k: int = 5, 
-    threshold: float = 0.70
+    threshold: float = 0.60
 ) -> tuple[list[dict], str]:
     """
     RAG Pipeline:
@@ -99,7 +99,7 @@ async def recall(
     # 6. Generate Synthesis
     context_text = "\n\n".join(context_parts)
     chain = WITNESS_PROMPT | get_flash() | StrOutputParser()
-    
+
     synthesis = await chain.ainvoke({
         "query": query,
         "context": context_text
